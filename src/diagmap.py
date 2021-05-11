@@ -40,8 +40,8 @@ def _calculate_distances(points, ax, single_section=False):
                 for i_surf in range(n_surfs)
             ]
 
-            surf_points = np.transpose(surf_points, [0, 2, 1])
-            surf_points_rz = np.transpose(surf_points_rz, [0, 2, 1])
+            surf_points = [np.transpose(s) for s in surf_points]
+            surf_points_rz = [np.transpose(s) for s in surf_points_rz]
 
             # Build index tree for every surface in this phi plane
             surf_trees = [
