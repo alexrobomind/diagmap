@@ -148,8 +148,16 @@ class Mapping:
 
     def _calc_phi(self):
         x, y, z = self.points
+        
+        n_phi = x.shape[-1]
+        
         phis = np.arctan2(y, x)
-        phis = np.mean(phis, axis=(0, 1))
+        phis = phis.reshape([-1, n_phi])
+        
+        phis = np.asarray([
+            np.mean(phis[np.isfinite(phis[:, i_phi]), i_phi])
+			for i_phi in range(phis.shape[1])
+        ])
 
         span = 2 * np.pi / self.period
         phis %= span
