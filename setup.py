@@ -5,7 +5,7 @@ from distutils.core import setup
 
 setup(
     name="diagmap",
-    version="1.2",
+    version="1.3",
     description="Diagnostic mapping utility",
     author="Alexander Knieps",
     author_email="a.knieps@fz-juelich.de",

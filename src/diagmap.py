@@ -27,7 +27,7 @@ def _calculate_distances(points, ax, single_section=False):
     points_rz = np.stack([r, z], axis=0)
 
     with multiprocessing.pool.ThreadPool(6) as pool:
-        for i_phi in trange(n_phi):
+        for i_phi in trange(n_phi, desc = 'Calculating distances'):
             # print('\tBuilding slice trees')
 
             surf_points = [
@@ -120,7 +120,7 @@ def _calculate_distances(points, ax, single_section=False):
 class Mapping:
     """Class that builds and stores a toroidally interpolated mapping function"""
 
-    def __init__(self, points, ax, period=1):
+    def __init__(self, points, ax, period=1, labels = None):
         """
         Creates mapping function
 
@@ -129,17 +129,24 @@ class Mapping:
                   is the coordinate dimension (cartesian x, y, z), n_surfaces is the number of
                   fieldlines / flux surfaces, n_turns is the number of points per surface &
                   cross-section and n_phi is the number of toroidal corss-sections.
-                param ax: A [3, n_point] shaped array, holding points of the magnetic axis in
+                ax: A [3, n_point] shaped array, holding points of the magnetic axis in
                   cartesian coordinates. The points do not have to be aligned with the toroidal
                   cross sections presented above.
+                period: The periodicity of the mapping. 1 means full circle
+                labels: Can be used to override the precomputed labels with arbitrary given labels.
         """
         self.points = points
         self.ax = ax
-
-        surf_ds, ax_ds, dist_tot = _calculate_distances(points, ax)
-
-        self.distances = dist_tot
         self.period = period
+
+        if labels is not None:
+            n_surf = points.shape[1]
+            
+            assert labels.shape == (n_surf,)
+            self.labels = labels
+        else:
+            surf_ds, ax_ds, dist_tot = _calculate_distances(points, ax)
+            self.labels = dist_tot
 
         self._calc_phi()
         self._sort()
@@ -150,17 +157,32 @@ class Mapping:
         x, y, z = self.points
         
         n_phi = x.shape[-1]
+
+        span = 2 * np.pi / self.period
         
         phis = np.arctan2(y, x)
         phis = phis.reshape([-1, n_phi])
         
+        def filtered_mean(x):
+            x = x[np.isfinite(x)]
+            
+            c = np.cos(x)
+            s = np.sin(x)
+            
+            mc = np.mean(c)
+            ms = np.mean(s)
+            
+            ang = np.arctan2(ms, mc)
+            ang %= span
+            ang += span
+            ang %= span
+            
+            return ang
+        
         phis = np.asarray([
-            np.mean(phis[np.isfinite(phis[:, i_phi]), i_phi])
-			for i_phi in range(phis.shape[1])
+            filtered_mean(phis[:, i_phi])
+			for i_phi in range(n_phi)
         ])
-
-        span = 2 * np.pi / self.period
-        phis %= span
 
         self.phis = phis
 
@@ -188,7 +210,7 @@ class Mapping:
     def _build_interpolators(self):
         n_surfs = self.points.shape[1]
 
-        assert self.distances.shape == (n_surfs,)
+        assert self.labels.shape == (n_surfs,)
 
         # Build Delaunay interpolators
         def single_interpolator(points):
@@ -201,7 +223,7 @@ class Mapping:
             points = np.transpose(points, [1, 2, 0])
 
             # Produce length array with matching shape
-            distances = self.distances
+            distances = self.labels
             distances = np.broadcast_to(distances[:, None], points.shape[:-1])
 
             # Collapse surface and turn dimension together
@@ -220,7 +242,7 @@ class Mapping:
 
         self.interpolators = [
             single_interpolator(self.points[:, :, :, i])
-            for i in trange(self.points.shape[3])
+            for i in trange(self.points.shape[3], desc = 'Building Delaunay interpolators')
         ]
 
     def __call__(self, x, y, z):
@@ -239,7 +261,10 @@ class Mapping:
             r = np.sqrt(x ** 2 + y ** 2)
 
             span = 2 * np.pi / self.period
-            ws = self._phi_interpolator(phi % span)
+            phi %= span
+            phi += span
+            phi %= span
+            ws = self._phi_interpolator(phi)
 
             result = 0
 
@@ -250,6 +275,40 @@ class Mapping:
                 val = self.interpolators[i]([r, z])
                 result += w * val
 
-            return val
+            return result
 
         return np.vectorize(inner)(x, y, z)
+    
+    def save(self, filename):
+        """Short-cut for diagmap.save(self, filename)"""
+        return globals()['save'](self, filename)
+
+def _dump(mapping):
+    return dict(
+        points = mapping.points,
+        ax = mapping.ax,
+        period = mapping.period,
+        labels = mapping.labels
+    )
+
+def _restore(data):
+    return Mapping(
+        points = data['points'],
+        ax = data['ax'],
+        period = data['period'],
+        labels = data['labels'],
+    )
+
+def save(mapping, file_or_filename):
+    """Saves the mapping to the specified file or filename"""
+    
+    if isinstance(file_or_filename, str) and file_or_filename[-4:] != '.npz':
+        import warnings
+        warnings.warn('Numpy has the nasty habit to append ".npz" to all filenames saved as archives if not already present. The current file will be saved as "{}.npz"'.format(file_or_filename))
+        
+    np.savez_compressed(file_or_filename, **_dump(mapping))
+
+def load(file_or_filename):
+    """Loads a mapping from a previously saved file or filename"""
+    with np.load(file_or_filename, allow_pickle = True) as data:
+        return _restore(data)
